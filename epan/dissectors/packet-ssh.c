@@ -37,6 +37,8 @@
 
 #include "config.h"
 
+#include <stdio.h>
+
 #include <epan/packet.h>
 #include <epan/exceptions.h>
 #include <epan/sctpppids.h>
@@ -354,6 +356,83 @@ static void ssh_choose_algo(gchar *client, gchar *server, gchar **result);
 static void ssh_set_mac_length(struct ssh_peer_data *peer_data);
 static void ssh_set_kex_specific_dissector(struct ssh_flow_data *global_data);
 
+enum { MAXL = 40, MAXC = 260 };
+
+static void
+parse_ssh_file(const gchar *file_path) {
+    GError *error = NULL;
+    gsize *len = NULL;
+    gchar *content;
+    gboolean success = g_file_get_contents(file_path, &content, len, &error);
+
+    if (!success) {
+        printf("CS5152: Failed!");
+    }
+   
+    // STEP 2: File tokenizing
+   
+    gchar** file = g_strsplit(content, "\n", 30000);
+    guint length = g_strv_length(file);
+    g_print("CS5152: %u\n", length);
+    gchar**** words = (gchar****) g_malloc(sizeof(gchar***) * length);
+    for (guint i = 0; i < length; i++) {
+        gchar *line = file[i];
+        gchar** vals = g_strsplit(line, "|", 10);
+
+        guint line_length = g_strv_length(vals);
+
+        if (line_length <= 1) {
+            words[i] = NULL;
+            continue;
+        }
+
+        words[i] = (gchar***)g_malloc(line_length * sizeof(gchar**));
+
+        for (guint l = 0; l < line_length; l++) {
+            gchar** kv = g_strsplit(vals[l], "=", 2);
+            words[i][l] = (gchar**) g_malloc(sizeof(gchar*) * line_length);
+            
+            guint kv_len = g_strv_length(kv);
+            
+            for (guint z = 0; z < kv_len; z++) {
+                guint size = strlen(kv[0]);
+                words[i][l][z] = (gchar*) g_malloc(sizeof(gchar) * size);
+                strncpy(words[i][l][z], kv[z], size);
+            }
+        }
+    }
+
+    // STEP 3: Get the keys
+    g_print("CS5152: begin the hunt for keys!\n");
+   
+    // TODO Search by these...
+    // const gchar* line_iden = "debug1: DUMP";
+    // const gchar* key0_iden = "KEY_DUMP_0";
+    // const gchar* key1_iden = "KEY_DUMP_1";
+
+    for (long unsigned int x = 0L; x < length; x++) {
+        if (words[x] == NULL) continue;
+        g_print("CS5152: not skipping %lu", x);
+        for (long unsigned int  y = 0L; y < sizeof(words[x]); y++) {
+                // TODO Fix this calculation
+                int len1 = sizeof(words[x][y]);
+
+                if (len1 == 2) {
+                   gchar* key = words[x][y][0];
+                   gchar* val = words[x][y][1];
+
+                   // TODO Figure out why this is segfaulting
+                   g_print("CS5152: key: %s, val: %s\n", key, val);
+                } else {
+                    gchar* key = words[x][y][0];
+
+                    if (key != NULL) {
+                        g_print("CS5152: key: %s\n", key);
+                    }
+                }
+        }
+    }
+}
 
 static int
 dissect_ssh(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, void* data _U_)
@@ -370,6 +449,15 @@ dissect_ssh(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, void* data _U_)
     struct ssh_flow_data *global_data=NULL;
     struct ssh_peer_data *peer_data;
 
+
+    // TODO Retrieve file path after parsing is fixed.
+    // Fixed path for now.
+    const gchar* file_path = "/home/evan/openssh-dump/special_dump.txt"; //getenv("WS_SSH_DECRYPTION_FILE");
+
+    printf("CS5152: variable: %s\n", file_path);
+    if (file_path != NULL) {
+        parse_ssh_file(file_path);
+    }
     conversation = find_or_create_conversation(pinfo);
 
     global_data = (struct ssh_flow_data *)conversation_get_proto_data(conversation, proto_ssh);
@@ -477,7 +565,7 @@ ssh_dissect_ssh2(tvbuff_t *tvb, packet_info *pinfo,
     struct ssh_peer_data *peer_data = &global_data->peer_data[is_response];
 
     if (tree) {
-        wmem_strbuf_t *title=wmem_strbuf_new(wmem_packet_scope(), "SSH Version 2");
+        wmem_strbuf_t *title = wmem_strbuf_new(wmem_packet_scope(), "SSH Version 2");
 
         if (peer_data->enc || peer_data->mac || peer_data->comp) {
             wmem_strbuf_append_printf(title, " (");
@@ -496,7 +584,7 @@ ssh_dissect_ssh2(tvbuff_t *tvb, packet_info *pinfo,
             wmem_strbuf_append_printf(title, ")");
         }
 
-        ssh2_tree=proto_tree_add_subtree(tree, tvb, offset, -1, ett_ssh2, NULL, wmem_strbuf_get_str(title));
+        ssh2_tree = proto_tree_add_subtree(tree, tvb, offset, -1, ett_ssh2, NULL, wmem_strbuf_get_str(title));
     }
 
     if ((peer_data->frame_key_start == 0) ||
@@ -968,9 +1056,9 @@ ssh_dissect_encrypted_packet(tvbuff_t *tvb, packet_info *pinfo,
         proto_tree_add_item(tree, hf_ssh_encrypted_packet,
                     tvb, offset+4, encrypted_len, ENC_NA);
 
-        if (peer_data->mac_length>0)
+        if (peer_data->mac_length > 0)
             proto_tree_add_item(tree, hf_ssh_mac_string,
-                tvb, offset+4+encrypted_len,
+                tvb, offset + 4 + encrypted_len,
                 peer_data->mac_length, ENC_NA);
     }
     offset+=len;
